@@ -38,27 +38,76 @@ async fn start_ble_advertising(
 ) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        let mut guard = adv_state.lock().map_err(|e| format!("lock adv_state: {e}"))?;
+        println!("[DEBUG] Starting BLE advertising on macOS...");
+        println!("[DEBUG] Parameters - name: {:?}, service_uuid: {:?}", name, service_uuid);
+        
+        let mut guard = adv_state.lock().map_err(|e| {
+            let error_msg = format!("lock adv_state: {e}");
+            println!("[ERROR] Failed to lock adv_state: {}", error_msg);
+            error_msg
+        })?;
+        
         // 如果已在广播，先优雅停止（关闭 stdin -> 等待退出）
         if let Some(child) = guard.as_mut() {
+            println!("[DEBUG] Stopping existing advertising process...");
             let _ = child.stdin.take(); // 关闭管道写端，通知子进程 EOF
             let _ = child.wait();
             *guard = None;
+            println!("[DEBUG] Existing advertising process stopped");
+        }
+
+        // 检查ble-adv二进制文件是否存在
+        let ble_adv_path = std::path::Path::new("src-tauri/ble-adv/ble-adv");
+        println!("[DEBUG] Checking ble-adv binary file:");
+        println!("[DEBUG] - Path: {:?}", ble_adv_path);
+        println!("[DEBUG] - Exists: {}", ble_adv_path.exists());
+        if ble_adv_path.exists() {
+            if let Ok(metadata) = std::fs::metadata(ble_adv_path) {
+                println!("[DEBUG] - File size: {} bytes", metadata.len());
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let mode = metadata.permissions().mode();
+                    println!("[DEBUG] - Permissions: {:o}", mode);
+                    println!("[DEBUG] - Is executable: {}", mode & 0o111 != 0);
+                }
+            }
         }
 
         // 获取sidecar路径，这在开发和发布模式下都能正确工作
+        println!("[DEBUG] Getting sidecar command for 'ble-adv'...");
         let mut cmd = app.shell().sidecar("ble-adv")
-            .map_err(|e| format!("Failed to get sidecar command: {}", e))?;
-        if let Some(n) = name { cmd = cmd.arg("--name").arg(n); }
-        if let Some(u) = service_uuid { cmd = cmd.arg("--uuid").arg(u); }
+            .map_err(|e| {
+                let error_msg = format!("Failed to get sidecar command: {}", e);
+                println!("[ERROR] {}", error_msg);
+                error_msg
+            })?;
+        println!("[DEBUG] Sidecar command created successfully");
+        
+        if let Some(n) = &name { 
+            cmd = cmd.arg("--name").arg(n); 
+            println!("[DEBUG] Added --name argument: {}", n);
+        }
+        if let Some(u) = &service_uuid { 
+            cmd = cmd.arg("--uuid").arg(u); 
+            println!("[DEBUG] Added --uuid argument: {}", u);
+        }
+        
+        println!("[DEBUG] Spawning ble-adv process...");
         let (mut _rx, mut child) = cmd
             .spawn()
-            .map_err(|e| format!("failed to start advertiser: {e}"))?;
+            .map_err(|e| {
+                let error_msg = format!("failed to start advertiser: {e}");
+                println!("[ERROR] {}", error_msg);
+                error_msg
+            })?;
+        println!("[DEBUG] BLE advertising process spawned successfully");
 
         // 注意：这里我们只保存child的引用，因为新的API返回的是不同的类型
         // 为了简化，我们暂时不保存child，而是依赖进程的自然生命周期
         // 在实际应用中，你可能需要保存child以便后续控制
         *guard = None; // 临时解决方案
+        println!("[DEBUG] BLE advertising started successfully");
         Ok(())
     }
 
@@ -78,13 +127,24 @@ async fn start_ble_advertising(
 async fn stop_ble_advertising(adv_state: tauri::State<'_, AdvState>) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        let mut guard = adv_state.lock().map_err(|e| format!("lock adv_state: {e}"))?;
+        println!("[DEBUG] Stopping BLE advertising on macOS...");
+        let mut guard = adv_state.lock().map_err(|e| {
+            let error_msg = format!("lock adv_state: {e}");
+            println!("[ERROR] Failed to lock adv_state: {}", error_msg);
+            error_msg
+        })?;
+        
         if let Some(child) = guard.as_mut() {
+            println!("[DEBUG] Found active advertising process, stopping...");
             // 优雅停止：关闭 stdin，等待退出
             let _ = child.stdin.take();
             let _ = child.wait();
             *guard = None;
+            println!("[DEBUG] BLE advertising process stopped successfully");
+        } else {
+            println!("[DEBUG] No active advertising process found");
         }
+        println!("[DEBUG] BLE advertising stop operation completed");
         Ok(())
     }
     
