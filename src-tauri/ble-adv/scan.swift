@@ -47,8 +47,5 @@ class BleStopper: NSObject, CBPeripheralManagerDelegate {
     }
 }
 
-print("Initializing BLE Stopper...")
-let stopper = BleStopper()
-
-// 启动运行循环，等待异步的蓝牙状态更新事件
-RunLoop.main.run()
+// BLE Stopper functionality - to be called from main.swift if needed
+// This file only contains the BleStopper class definition

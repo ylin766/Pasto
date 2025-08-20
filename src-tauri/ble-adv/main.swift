@@ -54,5 +54,5 @@ final class Advertiser: NSObject, CBPeripheralManagerDelegate {
 let name = parseArg("--name", default: "Pasto")
 let uuid = parseArg("--uuid", default: "12345678-1234-1234-1234-1234567890AB")
 
-let adv = Advertiser(localName: name, serviceUUID: uuid)
+let _ = Advertiser(localName: name, serviceUUID: uuid)
 RunLoop.main.run()
