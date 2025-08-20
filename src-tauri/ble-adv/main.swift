@@ -20,12 +20,16 @@ func logError(_ message: String) {
 final class Advertiser: NSObject, CBPeripheralManagerDelegate {
     private var peripheralManager: CBPeripheralManager!
     private let advData: [String: Any]
+    private let serviceUUID: CBUUID
+    private var clipboardService: CBMutableService?
+    private var clipboardCharacteristic: CBMutableCharacteristic?
 
     init(localName: String, serviceUUID: String) {
         logDebug("Initializing Advertiser with name: '\(localName)', UUID: '\(serviceUUID)'")
+        self.serviceUUID = CBUUID(string: serviceUUID)
         self.advData = [
             CBAdvertisementDataLocalNameKey: localName,
-            CBAdvertisementDataServiceUUIDsKey: [CBUUID(string: serviceUUID)]
+            CBAdvertisementDataServiceUUIDsKey: [self.serviceUUID]
         ]
         super.init()
         logDebug("Creating CBPeripheralManager...")
@@ -53,17 +57,9 @@ final class Advertiser: NSObject, CBPeripheralManagerDelegate {
         
         switch peripheral.state {
         case .poweredOn:
-            logDebug("Bluetooth is powered on, starting advertising...")
-            peripheral.startAdvertising(self.advData)
-            if let name = self.advData[CBAdvertisementDataLocalNameKey] as? String,
-               let uuids = self.advData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID] {
-                let uuidStrings = uuids.map { $0.uuidString }.joined(separator: ",")
-                logDebug("Advertising data prepared - Name: '\(name)', UUIDs: [\(uuidStrings)]")
-                print("Advertising started as '\(name)' with service \(uuidStrings)")
-            } else {
-                logError("Failed to extract advertising data")
-                print("Advertising started")
-            }
+            logDebug("Bluetooth is powered on, setting up services...")
+            setupClipboardService()
+            startAdvertising()
         case .poweredOff:
             logError("Bluetooth is powered off - cannot start advertising")
             print("Bluetooth is powered off")
@@ -83,6 +79,96 @@ final class Advertiser: NSObject, CBPeripheralManagerDelegate {
             logError("Unknown Bluetooth state: \(peripheral.state.rawValue)")
             print("Bluetooth state: \(peripheral.state.rawValue)")
         }
+    }
+    
+    private func setupClipboardService() {
+        logDebug("Setting up clipboard service with UUID: \(serviceUUID.uuidString)")
+        
+        // 创建剪贴板特征 (可读可写)
+        let characteristicUUID = CBUUID(string: "87654321-4321-4321-4321-210987654321")
+        clipboardCharacteristic = CBMutableCharacteristic(
+            type: characteristicUUID,
+            properties: [.read, .write, .notify],
+            value: nil,
+            permissions: [.readable, .writeable]
+        )
+        
+        logDebug("Created clipboard characteristic with UUID: \(characteristicUUID.uuidString)")
+        
+        // 创建剪贴板服务
+        clipboardService = CBMutableService(type: serviceUUID, primary: true)
+        clipboardService?.characteristics = [clipboardCharacteristic!]
+        
+        logDebug("Created clipboard service, adding to peripheral manager...")
+        
+        // 添加服务到外设管理器
+        peripheralManager.add(clipboardService!)
+    }
+    
+    private func startAdvertising() {
+        logDebug("Starting advertising...")
+        peripheralManager.startAdvertising(self.advData)
+        if let name = self.advData[CBAdvertisementDataLocalNameKey] as? String {
+            let uuidString = serviceUUID.uuidString
+            logDebug("Advertising data prepared - Name: '\(name)', UUID: \(uuidString)")
+            print("Advertising started as '\(name)' with service \(uuidString)")
+        } else {
+            logError("Failed to extract advertising data")
+            print("Advertising started")
+        }
+    }
+    
+    // MARK: - CBPeripheralManagerDelegate Methods
+    
+    func peripheralManager(_ peripheral: CBPeripheralManager, didAdd service: CBService, error: Error?) {
+        if let error = error {
+            logError("Failed to add service: \(error.localizedDescription)")
+            return
+        }
+        logDebug("Successfully added service: \(service.uuid.uuidString)")
+        print("Service added: \(service.uuid.uuidString)")
+    }
+    
+    func peripheralManager(_ peripheral: CBPeripheralManager, didReceiveRead request: CBATTRequest) {
+        logDebug("Received read request for characteristic: \(request.characteristic.uuid.uuidString)")
+        
+        if request.characteristic.uuid == clipboardCharacteristic?.uuid {
+            // 返回当前剪贴板内容
+            let clipboardContent = "Hello from Pasto!"
+            request.value = clipboardContent.data(using: .utf8)
+            peripheral.respond(to: request, withResult: .success)
+            logDebug("Responded to read request with: \(clipboardContent)")
+        } else {
+            peripheral.respond(to: request, withResult: .attributeNotFound)
+            logError("Read request for unknown characteristic")
+        }
+    }
+    
+    func peripheralManager(_ peripheral: CBPeripheralManager, didReceiveWrite requests: [CBATTRequest]) {
+        logDebug("Received \(requests.count) write request(s)")
+        
+        for request in requests {
+            if request.characteristic.uuid == clipboardCharacteristic?.uuid {
+                if let data = request.value, let content = String(data: data, encoding: .utf8) {
+                    logDebug("Received clipboard content: \(content)")
+                    print("Clipboard updated: \(content)")
+                    // 这里可以将内容写入系统剪贴板
+                } else {
+                    logError("Failed to decode write request data")
+                }
+            }
+        }
+        
+        peripheral.respond(to: requests.first!, withResult: .success)
+    }
+    
+    func peripheralManagerDidStartAdvertising(_ peripheral: CBPeripheralManager, error: Error?) {
+        if let error = error {
+            logError("Failed to start advertising: \(error.localizedDescription)")
+            return
+        }
+        logDebug("Successfully started advertising")
+        print("BLE advertising active")
     }
 }
 
